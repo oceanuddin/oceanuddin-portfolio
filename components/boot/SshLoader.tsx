@@ -34,8 +34,18 @@ export default function SshLoader({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduced) {
-      finish();
-      return;
+      // Reduce Motion: still show the boot screen, but render the whole
+      // log at once (no typing animation) and hold briefly before entering.
+      setShown(SCRIPT);
+      const t = setTimeout(finish, 2000);
+      const onKeyRM = () => finish();
+      window.addEventListener("keydown", onKeyRM);
+      const pendingRM = timers.current;
+      return () => {
+        clearTimeout(t);
+        pendingRM.forEach(clearTimeout);
+        window.removeEventListener("keydown", onKeyRM);
+      };
     }
 
     let acc = 0;
