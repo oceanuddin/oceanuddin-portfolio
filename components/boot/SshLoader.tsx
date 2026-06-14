@@ -3,80 +3,80 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
-type Line = { text: string; prompt?: boolean; delay: number; cls?: string };
+type Line = { text: string; prompt?: boolean; pause: number; cls?: string };
 
+// The full SSH session, typed out line by line like a live terminal.
 const SCRIPT: Line[] = [
-  { text: "ssh visitor@oceanuddin.com", prompt: true, delay: 60 },
-  { text: "The authenticity of host 'oceanuddin.com' can't be established.", delay: 280 },
-  { text: "ED25519 key fingerprint is SHA256:0c3a...n_uddin/portfolio.", delay: 120 },
-  { text: "Are you sure you want to continue connecting? yes", delay: 260 },
-  { text: "Warning: Permanently added 'oceanuddin.com' to known hosts.", delay: 220, cls: "text-white/45" },
-  { text: "visitor@oceanuddin.com's password: ************", delay: 300 },
-  { text: "Authenticating ......... [ OK ]", delay: 360, cls: "text-cyber-teal" },
-  { text: "Loading portfolio modules .... [ OK ]", delay: 300, cls: "text-cyber-teal" },
-  { text: "Negotiating glassmorphism .... [ OK ]", delay: 260, cls: "text-cyber-teal" },
-  { text: "", delay: 120 },
-  { text: "Welcome, visitor. Connection established.", delay: 200, cls: "text-cyber-cyan font-semibold" },
+  { text: "ssh visitor@oceanuddin.com", prompt: true, pause: 320 },
+  { text: "The authenticity of host 'oceanuddin.com' can't be established.", pause: 120 },
+  { text: "ED25519 key fingerprint is SHA256:0c3a...n_uddin/portfolio.", pause: 120 },
+  { text: "Are you sure you want to continue connecting (yes/no)? yes", pause: 280 },
+  { text: "Warning: Permanently added 'oceanuddin.com' to known hosts.", pause: 160, cls: "text-white/45" },
+  { text: "visitor@oceanuddin.com's password: ************", pause: 360 },
+  { text: "Authenticating ......... [ OK ]", pause: 240, cls: "text-cyber-teal" },
+  { text: "Loading portfolio modules .... [ OK ]", pause: 220, cls: "text-cyber-teal" },
+  { text: "Negotiating glassmorphism .... [ OK ]", pause: 220, cls: "text-cyber-teal" },
+  { text: "", pause: 120 },
+  { text: "Welcome, visitor. Connection established.", pause: 300, cls: "text-cyber-cyan font-semibold" },
 ];
 
 export default function SshLoader({ onDone }: { onDone: () => void }) {
   const [visible, setVisible] = useState(true);
-  const [shown, setShown] = useState<Line[]>([]);
-  const [typed, setTyped] = useState("");
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [rendered, setRendered] = useState<Line[]>([]);
+  const [typingLine, setTypingLine] = useState<Line | null>(null);
+  const [typingText, setTypingText] = useState("");
+  const doneRef = useRef(false);
 
   const finish = () => {
-    timers.current.forEach(clearTimeout);
+    if (doneRef.current) return;
+    doneRef.current = true;
     setVisible(false);
     setTimeout(onDone, 650);
   };
 
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) {
-      // Reduce Motion: still show the boot screen, but render the whole
-      // log at once (no typing animation) and hold briefly before entering.
-      setShown(SCRIPT);
-      const t = setTimeout(finish, 2000);
-      const onKeyRM = () => finish();
-      window.addEventListener("keydown", onKeyRM);
-      const pendingRM = timers.current;
-      return () => {
-        clearTimeout(t);
-        pendingRM.forEach(clearTimeout);
-        window.removeEventListener("keydown", onKeyRM);
-      };
-    }
+    // Type each command/response out character by character, in order.
+    // Reduce Motion: keep the typing effect but run it noticeably faster.
+    const speedMul = reduced ? 0.4 : 1;
 
-    let acc = 0;
-    SCRIPT.forEach((line, idx) => {
-      acc += line.delay;
-      // type the first (ssh) line char by char for effect
-      if (idx === 0) {
-        line.text.split("").forEach((_, ci) => {
-          timers.current.push(
-            setTimeout(() => setTyped(line.text.slice(0, ci + 1)), 60 + ci * 45)
-          );
-        });
-        timers.current.push(
-          setTimeout(() => {
-            setShown((s) => [...s, line]);
-            setTyped("");
-          }, 60 + line.text.length * 45 + 200)
-        );
-        acc = 60 + line.text.length * 45 + 200;
-        return;
+    let cancelled = false;
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
+    const wait = (ms: number) =>
+      new Promise<void>((res) => {
+        timeouts.push(setTimeout(res, Math.max(0, ms * speedMul)));
+      });
+
+    (async () => {
+      for (const line of SCRIPT) {
+        if (cancelled) return;
+        setTypingLine(line);
+        // command/prompt lines type slower (human), output streams faster
+        const perChar = line.prompt ? 55 : line.text.length > 38 ? 11 : 20;
+        for (let c = 0; c <= line.text.length; c++) {
+          if (cancelled) return;
+          setTypingText(line.text.slice(0, c));
+          await wait(perChar);
+        }
+        if (cancelled) return;
+        setRendered((prev) => [...prev, line]);
+        setTypingLine(null);
+        setTypingText("");
+        await wait(line.pause);
       }
-      timers.current.push(setTimeout(() => setShown((s) => [...s, line]), acc));
-    });
+      if (cancelled) return;
+      await wait(650);
+      finish();
+    })();
 
-    timers.current.push(setTimeout(finish, acc + 900));
-
-    const onKey = () => finish();
+    const onKey = () => {
+      cancelled = true;
+      finish();
+    };
     window.addEventListener("keydown", onKey);
-    const pending = timers.current;
     return () => {
-      pending.forEach(clearTimeout);
+      cancelled = true;
+      timeouts.forEach(clearTimeout);
       window.removeEventListener("keydown", onKey);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -101,17 +101,17 @@ export default function SshLoader({ onDone }: { onDone: () => void }) {
                   visitor — ssh — 80×24
                 </span>
               </div>
-              <div className="min-h-[260px] p-5 font-mono text-[13px] leading-relaxed md:text-sm">
-                {shown.map((l, i) => (
+              <div className="min-h-[280px] p-5 font-mono text-[13px] leading-relaxed md:text-sm">
+                {rendered.map((l, i) => (
                   <div key={i} className={l.cls ?? "text-white/70"}>
                     {l.prompt && <span className="text-cyber-teal">$ </span>}
-                    {l.text}
+                    {l.text || " "}
                   </div>
                 ))}
-                {typed && (
-                  <div className="text-white/80">
-                    <span className="text-cyber-teal">$ </span>
-                    {typed}
+                {typingLine && (
+                  <div className={typingLine.cls ?? "text-white/80"}>
+                    {typingLine.prompt && <span className="text-cyber-teal">$ </span>}
+                    {typingText}
                     <span className="ml-0.5 inline-block h-4 w-2 translate-y-0.5 bg-cyber-teal animate-blink" />
                   </div>
                 )}
@@ -119,7 +119,7 @@ export default function SshLoader({ onDone }: { onDone: () => void }) {
             </div>
             <button
               onClick={finish}
-              className="mt-4 mx-auto block font-mono text-xs text-white/35 transition hover:text-white/70"
+              className="mx-auto mt-4 block font-mono text-xs text-white/35 transition hover:text-white/70"
             >
               press any key to skip →
             </button>
