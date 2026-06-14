@@ -1,26 +1,19 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import SshLoader from "@/components/boot/SshLoader";
 import Nav from "@/components/layout/Nav";
 import Terminal from "@/components/easter/Terminal";
 
 export default function SiteShell({ children }: { children: ReactNode }) {
+  // Play the SSH boot sequence on every fresh load/refresh.
+  // It's fully skippable (any key or the skip button), and respects
+  // prefers-reduced-motion (the loader finishes instantly in that case).
   const [booting, setBooting] = useState(true);
   const [ready, setReady] = useState(false);
 
-  // only show the SSH loader once per browser session
-  useEffect(() => {
-    const seen = sessionStorage.getItem("ou_booted");
-    if (seen) {
-      setBooting(false);
-      setReady(true);
-    }
-  }, []);
-
   const handleDone = () => {
-    sessionStorage.setItem("ou_booted", "1");
     setBooting(false);
     setReady(true);
   };
