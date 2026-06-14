@@ -3,28 +3,36 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
-type Line = { text: string; prompt?: boolean; pause: number; cls?: string };
+// A realistic SSH session: the human types commands/answers (irregular
+// rhythm), the server pauses for latency then prints responses instantly,
+// and tasks run before reporting [ OK ].
+type Item =
+  | { kind: "cmd"; text: string }
+  | { kind: "prompt"; q: string; a: string; cls?: string }
+  | { kind: "out"; text: string; cls?: string; latency: number }
+  | { kind: "task"; label: string; cls?: string };
 
-// The full SSH session, typed out line by line like a live terminal.
-const SCRIPT: Line[] = [
-  { text: "ssh visitor@oceanuddin.com", prompt: true, pause: 320 },
-  { text: "The authenticity of host 'oceanuddin.com' can't be established.", pause: 120 },
-  { text: "ED25519 key fingerprint is SHA256:0c3a...n_uddin/portfolio.", pause: 120 },
-  { text: "Are you sure you want to continue connecting (yes/no)? yes", pause: 280 },
-  { text: "Warning: Permanently added 'oceanuddin.com' to known hosts.", pause: 160, cls: "text-white/45" },
-  { text: "visitor@oceanuddin.com's password: ************", pause: 360 },
-  { text: "Authenticating ......... [ OK ]", pause: 240, cls: "text-cyber-teal" },
-  { text: "Loading portfolio modules .... [ OK ]", pause: 220, cls: "text-cyber-teal" },
-  { text: "Negotiating glassmorphism .... [ OK ]", pause: 220, cls: "text-cyber-teal" },
-  { text: "", pause: 120 },
-  { text: "Welcome, visitor. Connection established.", pause: 300, cls: "text-cyber-cyan font-semibold" },
+const SCRIPT: Item[] = [
+  { kind: "cmd", text: "ssh visitor@oceanuddin.com" },
+  { kind: "out", text: "The authenticity of host 'oceanuddin.com' can't be established.", latency: 820 },
+  { kind: "out", text: "ED25519 key fingerprint is SHA256:0c3a...n_uddin/portfolio.", latency: 140 },
+  { kind: "prompt", q: "Are you sure you want to continue connecting (yes/no)? ", a: "yes" },
+  { kind: "out", text: "Warning: Permanently added 'oceanuddin.com' to known hosts.", cls: "text-white/45", latency: 300 },
+  { kind: "prompt", q: "visitor@oceanuddin.com's password: ", a: "••••••••••••" },
+  { kind: "task", label: "Authenticating", cls: "text-cyber-teal" },
+  { kind: "task", label: "Loading portfolio modules", cls: "text-cyber-teal" },
+  { kind: "task", label: "Negotiating glassmorphism", cls: "text-cyber-teal" },
+  { kind: "out", text: "", latency: 160 },
+  { kind: "out", text: "Welcome, visitor. Connection established.", cls: "text-cyber-cyan font-semibold", latency: 220 },
 ];
+
+type Done = { text: string; cls?: string; prompt?: boolean };
+type Active = { text: string; cls?: string; prompt?: boolean; cursor: boolean };
 
 export default function SshLoader({ onDone }: { onDone: () => void }) {
   const [visible, setVisible] = useState(true);
-  const [rendered, setRendered] = useState<Line[]>([]);
-  const [typingLine, setTypingLine] = useState<Line | null>(null);
-  const [typingText, setTypingText] = useState("");
+  const [rendered, setRendered] = useState<Done[]>([]);
+  const [active, setActive] = useState<Active | null>(null);
   const doneRef = useRef(false);
 
   const finish = () => {
@@ -36,36 +44,71 @@ export default function SshLoader({ onDone }: { onDone: () => void }) {
 
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    // Type each command/response out character by character, in order.
-    // Reduce Motion: keep the typing effect but run it noticeably faster.
-    const speedMul = reduced ? 0.4 : 1;
+    const mul = reduced ? 0.4 : 1; // Reduce Motion: same flow, faster
 
     let cancelled = false;
     const timeouts: ReturnType<typeof setTimeout>[] = [];
     const wait = (ms: number) =>
-      new Promise<void>((res) => {
-        timeouts.push(setTimeout(res, Math.max(0, ms * speedMul)));
-      });
+      new Promise<void>((res) => timeouts.push(setTimeout(res, Math.max(0, ms * mul))));
+    const rnd = (min: number, max: number) => min + Math.random() * (max - min);
+
+    // Type a string with human-like jitter (slower after spaces/punctuation,
+    // the odd hesitation), appended onto a fixed prefix.
+    const human = async (prefix: string, str: string, cls?: string, prompt?: boolean) => {
+      let cur = "";
+      for (const ch of str) {
+        if (cancelled) return;
+        cur += ch;
+        setActive({ text: prefix + cur, cls, prompt, cursor: true });
+        let d = rnd(50, 120);
+        if (/[ .,/?@]/.test(ch) && Math.random() < 0.4) d += rnd(70, 200);
+        else if (Math.random() < 0.06) d += rnd(150, 320); // occasional pause
+        await wait(d);
+      }
+    };
+
+    const commit = (text: string, cls?: string, prompt?: boolean) => {
+      setRendered((prev) => [...prev, { text, cls, prompt }]);
+      setActive(null);
+    };
 
     (async () => {
-      for (const line of SCRIPT) {
+      for (const item of SCRIPT) {
         if (cancelled) return;
-        setTypingLine(line);
-        // command/prompt lines type slower (human), output streams faster
-        const perChar = line.prompt ? 55 : line.text.length > 38 ? 11 : 20;
-        for (let c = 0; c <= line.text.length; c++) {
+
+        if (item.kind === "cmd") {
+          await wait(rnd(250, 500)); // pause before the user starts typing
+          await human("", item.text, undefined, true);
           if (cancelled) return;
-          setTypingText(line.text.slice(0, c));
-          await wait(perChar);
+          await wait(rnd(260, 460)); // hit enter
+          commit(item.text, undefined, true);
+        } else if (item.kind === "prompt") {
+          // server prints the question instantly, then the human answers
+          setActive({ text: item.q, cls: item.cls, cursor: true });
+          await wait(rnd(360, 700));
+          await human(item.q, item.a, item.cls);
+          if (cancelled) return;
+          await wait(rnd(300, 520));
+          commit(item.q + item.a, item.cls);
+        } else if (item.kind === "out") {
+          await wait(item.latency);
+          if (cancelled) return;
+          commit(item.text, item.cls);
+        } else {
+          // task: "label" → dots tick up → "[ OK ]"
+          await wait(rnd(120, 260));
+          for (let i = 1; i <= 3; i++) {
+            if (cancelled) return;
+            setActive({ text: `${item.label} ${".".repeat(i)}`, cls: item.cls, cursor: false });
+            await wait(rnd(160, 300));
+          }
+          if (cancelled) return;
+          await wait(rnd(120, 240));
+          commit(`${item.label} ... [ OK ]`, item.cls);
         }
-        if (cancelled) return;
-        setRendered((prev) => [...prev, line]);
-        setTypingLine(null);
-        setTypingText("");
-        await wait(line.pause);
       }
       if (cancelled) return;
-      await wait(650);
+      await wait(700);
       finish();
     })();
 
@@ -105,14 +148,16 @@ export default function SshLoader({ onDone }: { onDone: () => void }) {
                 {rendered.map((l, i) => (
                   <div key={i} className={l.cls ?? "text-white/70"}>
                     {l.prompt && <span className="text-cyber-teal">$ </span>}
-                    {l.text || " "}
+                    {l.text || " "}
                   </div>
                 ))}
-                {typingLine && (
-                  <div className={typingLine.cls ?? "text-white/80"}>
-                    {typingLine.prompt && <span className="text-cyber-teal">$ </span>}
-                    {typingText}
-                    <span className="ml-0.5 inline-block h-4 w-2 translate-y-0.5 bg-cyber-teal animate-blink" />
+                {active && (
+                  <div className={active.cls ?? "text-white/80"}>
+                    {active.prompt && <span className="text-cyber-teal">$ </span>}
+                    {active.text}
+                    {active.cursor && (
+                      <span className="ml-0.5 inline-block h-4 w-2 translate-y-0.5 bg-cyber-teal animate-blink" />
+                    )}
                   </div>
                 )}
               </div>
